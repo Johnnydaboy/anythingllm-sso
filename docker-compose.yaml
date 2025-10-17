@@ -1,13 +1,8 @@
 services:
   anythingllm-sso:
     build: .
-    environment:
-      - API_KEY=Z7VCSWY-CAR4YC7-J8608ND-1EQ9AP4
-      - USER_ID=2
-      - PORT=3000
-      - WORKSPACE_SLUG=jonathan-pi-assistant
-      - CLEANUP_ENABLED=true
-      - CLEANUP_CRON=0 0 * * *
+    env_file:
+      - .env
     restart: unless-stopped
     labels:
       - traefik.enable=true
