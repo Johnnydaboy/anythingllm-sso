@@ -116,7 +116,7 @@ async function listDocumentsInFolder(folderName) {
   return retryApiCall(async () => {
     console.log(`Listing documents in folder: ${folderName}`);
     const response = await axios.get(
-      `https://ask.johnnypie.work/api/v1/documents/folder/${folderName}`, // <-- New API call
+      `https://ask.johnnypie.work/api/v1/documents/folder/${folderName}`, // Fixed trailing space
       {
         headers: {
           Authorization: `Bearer ${config.API_KEY}`,
