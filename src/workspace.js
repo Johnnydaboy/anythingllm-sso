@@ -4,7 +4,7 @@
 const axios = require('axios');
 // The config module exports an object with all configuration values.
 // Import it directly (no destructuring) to access those properties.
-const config = require('./config');
+const config = require('./config'); // <-- Make sure config is imported here
 
 // Helper function to wait
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,7 +41,7 @@ async function checkMultiUserMode() {
     console.error('Error checking multi-user mode:', error.message);
     if (error.response) {
       console.error('Error response status:', error.response.status);
-      console.error('Error response data:', error.response.data);
+      console.error('Error response ', error.response.data);
     }
     return false;
   }
@@ -137,10 +137,12 @@ async function listDocumentsInFolder(folderName) {
 
 // Documents handling
 const FOLDER_NAME = 'custom-documents'; // Define the folder name
-const SKIP_DOCUMENTS = process.env.SKIP_DOCUMENTS === 'true';
 
 async function addDocumentsToWorkspace(workspaceSlug) {
-  if (SKIP_DOCUMENTS) {
+  // Read the value from the imported config module
+  const skipDocuments = config.SKIP_DOCUMENTS; // <-- Read from config
+
+  if (skipDocuments) { // <-- Use the value read from config
     console.log(`Skipping document addition to workspace: ${workspaceSlug}`);
     return { skipped: true };
   }
@@ -187,10 +189,11 @@ async function addDocumentsToWorkspace(workspaceSlug) {
 
 
 // User‑workspace association
-const SKIP_USER_ADDITION = process.env.SKIP_USER_ADDITION === 'true' || false; // Default false
-
 async function addUserToWorkspace(userId, workspaceSlug) {
-  if (SKIP_USER_ADDITION) {
+  // Read the value from the imported config module
+  const skipUserAddition = config.SKIP_USER_ADDITION; // <-- Read from config
+
+  if (skipUserAddition) { // <-- Use the value read from config
     console.log(`Skipping user addition to workspace: ${workspaceSlug}`);
     return { skipped: true };
   }
@@ -303,8 +306,6 @@ module.exports = {
   deleteWorkspace,
   cleanupSessions,
   activeSessions,
-  SKIP_DOCUMENTS, // Keep this export
-  SKIP_USER_ADDITION,
-  // Remove DOCUMENTS_TO_ADD as it's no longer static
+  // Remove SKIP_DOCUMENTS export from here as it's read from config inside the functions
   sleep,
 };
