@@ -1,0 +1,14 @@
+{
+  "name": "anythingllm-sso-redirect",
+  "version": "1.0.0",
+  "description": "SSO redirect service for AnythingLLM with thread management",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "node-cron": "^3.0.2"
+  }
+}
