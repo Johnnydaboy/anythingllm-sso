@@ -4,12 +4,20 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      # Persistent storage for session data
+      - ./data:/app/data
     labels:
       - traefik.enable=true
       - traefik.http.routers.askredirect.rule=Host(`askredirect.johnnypie.work`)
       - traefik.http.routers.askredirect.entrypoints=web,websecure
       - traefik.http.routers.askredirect.tls=true
-
+      - traefik.http.routers.askme.rule=Host(`askme.johnnypie.work`)
+      - traefik.http.routers.askme.entrypoints=web,websecure
+      - traefik.http.routers.askme.tls=true
+      - traefik.http.routers.ask.rule=Host(`ask.johnnypie.work`)
+      - traefik.http.routers.ask.entrypoints=web,websecure
+      - traefik.http.routers.ask.tls=true
 networks:
   default:
     name: traefik_default

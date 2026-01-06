@@ -247,11 +247,12 @@ function registerRoutes(app, config, workspace, { renderSuccessPage, renderError
         const { token, loginPath } = await workspace.getSSOToken(userId);
         console.log(`SSO token obtained for user: ${userId}`);
 
-        // Track the active session
+        // Track the active session (both in-memory and persistent storage)
         workspace.activeSessions.set(sessionId, { userId, workspaceSlug });
+        await workspace.addSession(sessionId, userId, workspaceSlug);
 
         const destinationWorkspace = `/workspace/${workspaceSlug}`;
-        const ssoUrl = new URL(`https://ask.johnnypie.work${loginPath}`);
+        const ssoUrl = new URL(`https://anyllm.johnnypie.work${loginPath}`);
         ssoUrl.searchParams.append('redirect', destinationWorkspace);
         const redirectUrl = ssoUrl.toString();
 
@@ -316,6 +317,16 @@ function registerRoutes(app, config, workspace, { renderSuccessPage, renderError
             console.error('Failed to cleanup user:', e.message);
           }
         }
+        
+        // Remove from persistent storage if it was added
+        if (sessionId) {
+          try {
+            await workspace.removeSession(sessionId);
+            console.log('Removed session from persistent storage due to error');
+          } catch (e) {
+            console.error('Failed to remove session from storage:', e.message);
+          }
+        }
 
         // Prepare final error HTML content
         const errorHtml = `
@@ -347,24 +358,41 @@ function registerRoutes(app, config, workspace, { renderSuccessPage, renderError
   // Manual cleanup endpoint – useful for testing
   app.post('/cleanup', async (req, res) => {
     console.log('Manual cleanup triggered');
-    await workspace.cleanupSessions();
-    res.json({
-      status: 'ok',
-      message: 'Cleanup completed',
-      deletedSessions: workspace.activeSessions.size
-    });
+    try {
+      const results = await workspace.cleanupSessions();
+      res.json({
+        status: 'ok',
+        message: 'Cleanup completed',
+        results
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        message: 'Cleanup failed',
+        error: error.message
+      });
+    }
   });
 
   // Health‑check endpoint
-  app.get('/health', (req, res) => {
+  app.get('/health', async (req, res) => {
     const sessions = [];
     for (const [sessionId, { userId, workspaceSlug }] of workspace.activeSessions) {
       sessions.push({ sessionId, userId, workspaceSlug });
     }
+    
+    // Also get persistent sessions
+    const persistentSessions = await workspace.getAllSessions();
+    
     res.json({
       status: 'ok',
       activeSessions: sessions,
       activeSessionsCount: workspace.activeSessions.size,
+      persistentSessions: Object.keys(persistentSessions).map(sessionId => ({
+        sessionId,
+        ...persistentSessions[sessionId]
+      })),
+      persistentSessionsCount: Object.keys(persistentSessions).length,
       cleanupEnabled: config.CLEANUP_ENABLED,
       skipDocuments: config.SKIP_DOCUMENTS,
       skipUserAddition: config.SKIP_USER_ADDITION

@@ -2,9 +2,12 @@
 // Core logic and utilities for the AnythingLLM SSO service
 
 const axios = require('axios');
-// The config module exports an object with all configuration values.
-// Import it directly (no destructuring) to access those properties.
-const config = require('./config'); // <-- Make sure config is imported here
+const fs = require('fs').promises;
+const path = require('path');
+const config = require('./config');
+
+// Path to the persistent storage file
+const SESSIONS_FILE = path.join(__dirname, '..', 'data', 'sessions.json');
 
 // Helper function to wait
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,9 +20,68 @@ async function retryApiCall(apiCall, maxRetries = 3, delay = 1000) {
     } catch (error) {
       console.log(`Attempt ${i + 1} failed:`, error.message);
       if (i === maxRetries - 1) throw error;
-      await sleep(delay * (i + 1)); // Exponential backoff
+      await sleep(delay * (i + 1));
     }
   }
+}
+
+// Persistent storage functions
+async function ensureDataDirectory() {
+  const dataDir = path.dirname(SESSIONS_FILE);
+  try {
+    await fs.mkdir(dataDir, { recursive: true });
+  } catch (error) {
+    console.error('Error creating data directory:', error.message);
+  }
+}
+
+async function loadSessions() {
+  try {
+    await ensureDataDirectory();
+    const data = await fs.readFile(SESSIONS_FILE, 'utf8');
+    const sessions = JSON.parse(data);
+    console.log(`Loaded ${Object.keys(sessions).length} sessions from persistent storage`);
+    return sessions;
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log('No existing sessions file found, starting fresh');
+      return {};
+    }
+    console.error('Error loading sessions:', error.message);
+    return {};
+  }
+}
+
+async function saveSessions(sessions) {
+  try {
+    await ensureDataDirectory();
+    await fs.writeFile(SESSIONS_FILE, JSON.stringify(sessions, null, 2), 'utf8');
+    console.log(`Saved ${Object.keys(sessions).length} sessions to persistent storage`);
+  } catch (error) {
+    console.error('Error saving sessions:', error.message);
+  }
+}
+
+async function addSession(sessionId, userId, workspaceSlug) {
+  const sessions = await loadSessions();
+  sessions[sessionId] = {
+    userId,
+    workspaceSlug,
+    createdAt: new Date().toISOString()
+  };
+  await saveSessions(sessions);
+  console.log(`Session ${sessionId} added to persistent storage`);
+}
+
+async function removeSession(sessionId) {
+  const sessions = await loadSessions();
+  delete sessions[sessionId];
+  await saveSessions(sessions);
+  console.log(`Session ${sessionId} removed from persistent storage`);
+}
+
+async function getAllSessions() {
+  return await loadSessions();
 }
 
 // Check if multi-user mode is enabled using the dedicated endpoint
@@ -27,7 +89,7 @@ async function checkMultiUserMode() {
   try {
     console.log('Checking if multi-user mode is enabled using dedicated endpoint...');
     const response = await axios.get(
-      'https://ask.johnnypie.work/api/v1/admin/is-multi-user-mode', // Fixed trailing space
+      'https://anyllm.johnnypie.work/api/v1/admin/is-multi-user-mode',
       {
         headers: {
           Authorization: `Bearer ${config.API_KEY}`,
@@ -41,7 +103,7 @@ async function checkMultiUserMode() {
     console.error('Error checking multi-user mode:', error.message);
     if (error.response) {
       console.error('Error response status:', error.response.status);
-      console.error('Error response ', error.response.data);
+      console.error('Error response:', error.response.data);
     }
     return false;
   }
@@ -58,7 +120,7 @@ async function createUser(username) {
     const password = Math.random().toString(36).slice(-8);
     const role = 'default';
     const response = await axios.post(
-      'https://ask.johnnypie.work/api/v1/admin/users/new', // Fixed trailing space
+      'https://anyllm.johnnypie.work/api/v1/admin/users/new',
       { username, password, role },
       {
         headers: {
@@ -81,7 +143,7 @@ async function createWorkspace(workspaceName) {
   return retryApiCall(async () => {
     console.log(`Creating workspace: ${workspaceName}`);
     const response = await axios.post(
-      'https://ask.johnnypie.work/api/v1/workspace/new', // Fixed trailing space
+      'https://anyllm.johnnypie.work/api/v1/workspace/new',
       {
         name: workspaceName,
         similarityThreshold: parseFloat(config.SIMILARITY_THRESHOLD),
@@ -111,12 +173,12 @@ async function createWorkspace(workspaceName) {
   });
 }
 
-// --- NEW FUNCTION: List documents in a folder ---
+// List documents in a folder
 async function listDocumentsInFolder(folderName) {
   return retryApiCall(async () => {
     console.log(`Listing documents in folder: ${folderName}`);
     const response = await axios.get(
-      `https://ask.johnnypie.work/api/v1/documents/folder/${folderName}`, // Fixed trailing space
+      `https://anyllm.johnnypie.work/api/v1/documents/folder/${folderName}`,
       {
         headers: {
           Authorization: `Bearer ${config.API_KEY}`,
@@ -136,13 +198,12 @@ async function listDocumentsInFolder(folderName) {
 }
 
 // Documents handling
-const FOLDER_NAME = 'custom-documents'; // Define the folder name
+const FOLDER_NAME = 'custom-documents';
 
 async function addDocumentsToWorkspace(workspaceSlug) {
-  // Read the value from the imported config module
-  const skipDocuments = config.SKIP_DOCUMENTS; // <-- Read from config
+  const skipDocuments = config.SKIP_DOCUMENTS;
 
-  if (skipDocuments) { // <-- Use the value read from config
+  if (skipDocuments) {
     console.log(`Skipping document addition to workspace: ${workspaceSlug}`);
     return { skipped: true };
   }
@@ -150,16 +211,8 @@ async function addDocumentsToWorkspace(workspaceSlug) {
   return retryApiCall(async () => {
     console.log(`Adding documents to workspace: ${workspaceSlug}`);
 
-    // 1. List documents in the specified folder
     const documents = await listDocumentsInFolder(FOLDER_NAME);
-
-    // 2. Filter documents if needed (e.g., only PDFs, or specific files)
-    // Example: Only include files related to resume or portfolio
-    // const filteredDocuments = documents.filter(doc => doc.title.includes('resume') || doc.title.includes('portfolio'));
-    // For now, include all documents in the folder
     const filteredDocuments = documents;
-
-    // 3. Extract the 'name' field from each document object to create the 'adds' array
     const documentNamesToAdd = filteredDocuments.map(doc => `${FOLDER_NAME}/${doc.name}`);
 
     console.log(`Documents to add to workspace:`, documentNamesToAdd);
@@ -169,10 +222,9 @@ async function addDocumentsToWorkspace(workspaceSlug) {
         return { added: [], skipped: true, reason: 'No documents found in folder' };
     }
 
-    // 4. Call the update-embeddings endpoint with the dynamic list
     const response = await axios.post(
-      `https://ask.johnnypie.work/api/v1/workspace/${workspaceSlug}/update-embeddings`, // Fixed trailing space
-      { adds: documentNamesToAdd, deletes: [] }, // Use the dynamic list
+      `https://anyllm.johnnypie.work/api/v1/workspace/${workspaceSlug}/update-embeddings`,
+      { adds: documentNamesToAdd, deletes: [] },
       {
         headers: {
           Authorization: `Bearer ${config.API_KEY}`,
@@ -182,18 +234,16 @@ async function addDocumentsToWorkspace(workspaceSlug) {
     );
 
     console.log(`Documents added successfully to workspace: ${workspaceSlug}`);
-    console.log(`Add response:`, JSON.stringify(response.data, null, 2)); // Log the response
+    console.log(`Add response:`, JSON.stringify(response.data, null, 2));
     return response.data;
   });
 }
 
-
 // User‑workspace association
 async function addUserToWorkspace(userId, workspaceSlug) {
-  // Read the value from the imported config module
-  const skipUserAddition = config.SKIP_USER_ADDITION; // <-- Read from config
+  const skipUserAddition = config.SKIP_USER_ADDITION;
 
-  if (skipUserAddition) { // <-- Use the value read from config
+  if (skipUserAddition) {
     console.log(`Skipping user addition to workspace: ${workspaceSlug}`);
     return { skipped: true };
   }
@@ -205,7 +255,7 @@ async function addUserToWorkspace(userId, workspaceSlug) {
   console.log(`Adding user ${userId} to workspace: ${workspaceSlug}`);
   try {
     const response = await axios.post(
-      `https://ask.johnnypie.work/api/v1/admin/workspaces/${workspaceSlug}/manage-users`, // Fixed trailing space
+      `https://anyllm.johnnypie.work/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
       { userIds: [parseInt(userId)], reset: false },
       {
         headers: {
@@ -230,9 +280,9 @@ async function addUserToWorkspace(userId, workspaceSlug) {
 async function getSSOToken(userId) {
   return retryApiCall(async () => {
     console.log(`Getting SSO token for user: ${userId}`);
-    console.log(`API endpoint: https://ask.johnnypie.work/api/v1/users/${userId}/issue-auth-token`); // Fixed trailing space
+    console.log(`API endpoint: https://anyllm.johnnypie.work/api/v1/users/${userId}/issue-auth-token`);
     const response = await axios.get(
-      `https://ask.johnnypie.work/api/v1/users/${userId}/issue-auth-token`, // Fixed trailing space
+      `https://anyllm.johnnypie.work/api/v1/users/${userId}/issue-auth-token`,
       {
         headers: { Authorization: `Bearer ${config.API_KEY}` },
       }
@@ -247,54 +297,92 @@ async function getSSOToken(userId) {
 // Delete helpers
 async function deleteUser(userId) {
   try {
-    await axios.delete(`https://ask.johnnypie.work/api/v1/admin/users/${userId}`, { // Fixed trailing space
+    await axios.delete(`https://anyllm.johnnypie.work/api/v1/admin/users/${userId}`, {
       headers: { Authorization: `Bearer ${config.API_KEY}` },
     });
     console.log(`Deleted user: ${userId}`);
+    return true;
   } catch (error) {
     console.error(`Error deleting user ${userId}:`, error.message);
     if (error.response) console.error('Error response:', error.response.data);
-    throw error;
+    return false;
   }
 }
 
 async function deleteWorkspace(workspaceSlug) {
   try {
-    await axios.delete(`https://ask.johnnypie.work/api/v1/workspace/${workspaceSlug}`, { // Fixed trailing space
+    await axios.delete(`https://anyllm.johnnypie.work/api/v1/workspace/${workspaceSlug}`, {
       headers: { Authorization: `Bearer ${config.API_KEY}` },
     });
     console.log(`Deleted workspace: ${workspaceSlug}`);
+    return true;
   } catch (error) {
     console.error(`Error deleting workspace ${workspaceSlug}:`, error.message);
+    if (error.response) console.error('Error response:', error.response.data);
+    return false;
+  }
+}
+
+// Session cleanup - now reads from persistent storage
+async function cleanupSessions() {
+  try {
+    console.log('Starting session cleanup...');
+    const sessions = await loadSessions();
+    const sessionIds = Object.keys(sessions);
+    console.log(`Found ${sessionIds.length} sessions to clean up`);
+    
+    const results = {
+      total: sessionIds.length,
+      deleted: 0,
+      failed: 0,
+      errors: []
+    };
+
+    for (const sessionId of sessionIds) {
+      const { userId, workspaceSlug, createdAt } = sessions[sessionId];
+      console.log(`Attempting to delete session: ${sessionId} (created: ${createdAt})`);
+      
+      try {
+        const workspaceDeleted = await deleteWorkspace(workspaceSlug);
+        const userDeleted = await deleteUser(userId);
+        
+        if (workspaceDeleted && userDeleted) {
+          await removeSession(sessionId);
+          results.deleted++;
+          console.log(`✓ Successfully deleted session: ${sessionId} (user: ${userId}, workspace: ${workspaceSlug})`);
+        } else {
+          results.failed++;
+          results.errors.push({
+            sessionId,
+            error: 'Partial deletion failure',
+            workspaceDeleted,
+            userDeleted
+          });
+          console.log(`⚠ Partial deletion for session ${sessionId}: workspace=${workspaceDeleted}, user=${userDeleted}`);
+        }
+      } catch (err) {
+        results.failed++;
+        results.errors.push({
+          sessionId,
+          error: err.message
+        });
+        console.error(`✗ Failed to delete session ${sessionId}:`, err.message);
+      }
+    }
+    
+    console.log('Session cleanup completed!');
+    console.log(`Results: ${results.deleted} deleted, ${results.failed} failed out of ${results.total} total`);
+    return results;
+  } catch (error) {
+    console.error('Error during session cleanup:', error.message);
     if (error.response) console.error('Error response:', error.response.data);
     throw error;
   }
 }
 
-// Session cleanup
-async function cleanupSessions() {
-  try {
-    console.log('Starting session cleanup...');
-    console.log(`Found ${activeSessions.size} sessions to potentially clean up`);
-    for (const [sessionId, { userId, workspaceSlug }] of activeSessions) {
-      try {
-        await deleteWorkspace(workspaceSlug);
-        await deleteUser(userId);
-        console.log(`Deleted session: ${sessionId} (user: ${userId}, workspace: ${workspaceSlug})`);
-      } catch (err) {
-        console.error(`Failed to delete session ${sessionId}:`, err.message);
-      }
-    }
-    activeSessions.clear();
-    console.log('Session cleanup completed!');
-  } catch (error) {
-    console.error('Error during session cleanup:', error.message);
-    if (error.response) console.error('Error response:', error.response.data);
-  }
-}
-
-// In‑memory tracking of active sessions
-const activeSessions = new Map(); // Map<sessionId, {userId, workspaceSlug}>
+// In‑memory tracking of active sessions (kept for backwards compatibility)
+// But now we also persist to disk
+const activeSessions = new Map();
 
 module.exports = {
   createUser,
@@ -306,6 +394,8 @@ module.exports = {
   deleteWorkspace,
   cleanupSessions,
   activeSessions,
-  // Remove SKIP_DOCUMENTS export from here as it's read from config inside the functions
+  addSession,
+  removeSession,
+  getAllSessions,
   sleep,
 };
