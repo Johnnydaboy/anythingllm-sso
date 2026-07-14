@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 
 // Configuration
 const API_KEY = process.env.API_KEY;
+const LLM_API_URL = process.env.LLM_API_URL || "http://127.0.0.1:3001";
 const USER_ID = process.env.USER_ID || '2';
 const CLEANUP_ENABLED = process.env.CLEANUP_ENABLED === 'true';
 const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * *'; // Daily at midnight
@@ -62,7 +63,7 @@ const activeSessions = new Map(); // Map of sessionId -> { userId, workspaceSlug
 async function createUser(username) {
   try {
     const response = await axios.post(
-      `https://ask.johnnypie.work/api/v1/admin/users/${USER_ID}`,
+      `${LLM_API_URL}/api/v1/admin/users/${USER_ID}`,
       {
         username: username,
         password: Math.random().toString(36).slice(-8), // Generate random password
@@ -91,7 +92,7 @@ async function createUser(username) {
 async function createWorkspace(workspaceName) {
   try {
     const response = await axios.post(
-      'https://ask.johnnypie.work/api/v1/workspace/new',
+      `${LLM_API_URL}/api/v1/workspace/new`,
       {
         name: workspaceName,
         similarityThreshold: parseFloat(SIMILARITY_THRESHOLD),
@@ -124,7 +125,7 @@ async function createWorkspace(workspaceName) {
 async function addDocumentsToWorkspace(workspaceSlug) {
   try {
     await axios.post(
-      `https://ask.johnnypie.work/api/v1/workspace/${workspaceSlug}/update-embeddings`,
+      `${LLM_API_URL}/api/v1/workspace/${workspaceSlug}/update-embeddings`,
       {
         adds: DOCUMENTS_TO_ADD,
         deletes: []
@@ -151,7 +152,7 @@ async function addDocumentsToWorkspace(workspaceSlug) {
 async function addUserToWorkspace(userId, workspaceSlug) {
   try {
     await axios.post(
-      `https://ask.johnnypie.work/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
+      `${LLM_API_URL}/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
       {
         userIds: [userId],
         reset: false
@@ -178,7 +179,7 @@ async function addUserToWorkspace(userId, workspaceSlug) {
 async function deleteUser(userId) {
   try {
     await axios.delete(
-      `https://ask.johnnypie.work/api/v1/admin/users/${userId}`,
+      `${LLM_API_URL}/api/v1/admin/users/${userId}`,
       {
         headers: {
           'Authorization': `Bearer ${API_KEY}`
@@ -200,7 +201,7 @@ async function deleteUser(userId) {
 async function deleteWorkspace(workspaceSlug) {
   try {
     await axios.delete(
-      `https://ask.johnnypie.work/api/v1/workspace/${workspaceSlug}`,
+      `${LLM_API_URL}/api/v1/workspace/${workspaceSlug}`,
       {
         headers: {
           'Authorization': `Bearer ${API_KEY}`
@@ -284,7 +285,7 @@ app.get('/', async (req, res) => {
     
     // Get SSO token for the new user
     const response = await axios.get(
-      `https://ask.johnnypie.work/api/v1/users/${userId}/issue-auth-token`,
+      `${LLM_API_URL}/api/v1/users/${userId}/issue-auth-token`,
       {
         headers: {
           'Authorization': `Bearer ${API_KEY}`
@@ -299,7 +300,7 @@ app.get('/', async (req, res) => {
     const destinationWorkspace = `/workspace/${workspaceSlug}`;
 
     // Construct the full SSO URL
-    const ssoUrl = new URL(`https://ask.johnnypie.work${loginPath}`);
+    const ssoUrl = new URL(`${LLM_API_URL}${loginPath}`);
     ssoUrl.searchParams.append('redirect', destinationWorkspace);
     
     const redirectUrl = ssoUrl.toString();

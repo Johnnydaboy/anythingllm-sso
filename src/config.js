@@ -9,6 +9,7 @@ const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * *'; // Daily at midnig
 
 const WORKSPACE_NAME = process.env.WORKSPACE_NAME || 'Portfolio Workspace';
 const API_KEY = process.env.API_KEY;
+const LLM_API_URL = process.env.LLM_API_URL || "http://127.0.0.1:3001";
 const USER_ID = process.env.USER_ID || '2';
 
 const SIMILARITY_THRESHOLD = process.env.SIMILARITY_THRESHOLD || '0.7';
@@ -59,6 +60,7 @@ module.exports = {
   CLEANUP_CRON,
   WORKSPACE_NAME,
   API_KEY,
+  LLM_API_URL,
   USER_ID,
   SIMILARITY_THRESHOLD,
   OPENAI_TEMP,
