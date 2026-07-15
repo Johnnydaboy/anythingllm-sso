@@ -1,1 +1,2 @@
-.env
+.envtest_output.log
+node_modules/

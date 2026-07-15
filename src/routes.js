@@ -252,7 +252,7 @@ function registerRoutes(app, config, workspace, { renderSuccessPage, renderError
         await workspace.addSession(sessionId, userId, workspaceSlug);
 
         const destinationWorkspace = `/workspace/${workspaceSlug}`;
-        const ssoUrl = new URL(`https://anyllm.johnnypie.work${loginPath}`);
+        const ssoUrl = new URL(`${config.LLM_API_URL}${loginPath}`);
         ssoUrl.searchParams.append('redirect', destinationWorkspace);
         const redirectUrl = ssoUrl.toString();
 

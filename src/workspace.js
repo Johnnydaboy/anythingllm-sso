@@ -89,7 +89,7 @@ async function checkMultiUserMode() {
   try {
     console.log('Checking if multi-user mode is enabled using dedicated endpoint...');
     const response = await axios.get(
-      'https://anyllm.johnnypie.work/api/v1/admin/is-multi-user-mode',
+      `${config.LLM_API_URL}/api/v1/admin/is-multi-user-mode`,
       {
         headers: {
           Authorization: `Bearer ${config.API_KEY}`,
@@ -120,7 +120,7 @@ async function createUser(username) {
     const password = Math.random().toString(36).slice(-8);
     const role = 'default';
     const response = await axios.post(
-      'https://anyllm.johnnypie.work/api/v1/admin/users/new',
+      `${config.LLM_API_URL}/api/v1/admin/users/new`,
       { username, password, role },
       {
         headers: {
@@ -143,7 +143,7 @@ async function createWorkspace(workspaceName) {
   return retryApiCall(async () => {
     console.log(`Creating workspace: ${workspaceName}`);
     const response = await axios.post(
-      'https://anyllm.johnnypie.work/api/v1/workspace/new',
+      `${config.LLM_API_URL}/api/v1/workspace/new`,
       {
         name: workspaceName,
         similarityThreshold: parseFloat(config.SIMILARITY_THRESHOLD),
@@ -173,12 +173,79 @@ async function createWorkspace(workspaceName) {
   });
 }
 
+
+
+
+// Upload a document to AnythingLLM
+async function uploadDocument(filePath) {
+  return retryApiCall(async () => {
+    console.log(`Uploading document: ${filePath}`);
+    const FormData = require('form-data');
+    const fs = require('fs');
+    const formData = new FormData();
+    formData.append('file', fs.createReadStream(filePath));
+
+    const response = await axios.post(
+      `${config.LLM_API_URL}/api/v1/document/upload`,
+      formData,
+      {
+        headers: {
+          Authorization: `Bearer ${config.API_KEY}`,
+          ...formData.getHeaders(),
+        },
+      }
+    );
+    console.log('Upload document response:', JSON.stringify(response.data, null, 2));
+
+    let location = null;
+    if (response.data.success) {
+       console.log(`Document ${filePath} uploaded successfully`);
+       location = response.data.documents[0].location;
+    } else if (response.data.documents && response.data.documents.length > 0) {
+      location = response.data.documents[0].location;
+    } else {
+        throw new Error(response.data.error || 'Failed to upload document');
+    }
+
+    // Now attempt to move the file from root to the proper folder if needed
+    try {
+        await axios.post(
+            `${config.LLM_API_URL}/api/v1/document/create-folder`,
+            { name: FOLDER_NAME },
+            { headers: { Authorization: `Bearer ${config.API_KEY}`, 'Content-Type': 'application/json' } }
+        );
+    } catch(e) {
+        // Ignored, folder likely exists
+    }
+
+    try {
+        const fileObj = response.data.documents[0];
+        await axios.post(
+            `${config.LLM_API_URL}/api/v1/document/move-files`,
+            {
+                files: [{ from: location, to: `${FOLDER_NAME}/${fileObj.title}` }]
+            },
+            { headers: { Authorization: `Bearer ${config.API_KEY}`, 'Content-Type': 'application/json' } }
+        );
+        console.log(`Moved document to ${FOLDER_NAME}/${fileObj.title}`);
+        return `${FOLDER_NAME}/${fileObj.title}`;
+    } catch (e) {
+        console.error('Error moving file:', e.message);
+        // It might already be in the right location, so return the folder path anyway just in case
+        const fileObj = response.data.documents[0];
+        return `${FOLDER_NAME}/${fileObj.title}`;
+    }
+
+  });
+}
+
+
 // List documents in a folder
 async function listDocumentsInFolder(folderName) {
   return retryApiCall(async () => {
     console.log(`Listing documents in folder: ${folderName}`);
     const response = await axios.get(
-      `https://anyllm.johnnypie.work/api/v1/documents/folder/${folderName}`,
+      `${config.LLM_API_URL}/api/v1/documents/folder/${folderName}`,
       {
         headers: {
           Authorization: `Bearer ${config.API_KEY}`,
@@ -200,6 +267,7 @@ async function listDocumentsInFolder(folderName) {
 // Documents handling
 const FOLDER_NAME = 'custom-documents';
 
+
 async function addDocumentsToWorkspace(workspaceSlug) {
   const skipDocuments = config.SKIP_DOCUMENTS;
 
@@ -211,9 +279,53 @@ async function addDocumentsToWorkspace(workspaceSlug) {
   return retryApiCall(async () => {
     console.log(`Adding documents to workspace: ${workspaceSlug}`);
 
-    const documents = await listDocumentsInFolder(FOLDER_NAME);
-    const filteredDocuments = documents;
-    const documentNamesToAdd = filteredDocuments.map(doc => `${FOLDER_NAME}/${doc.name}`);
+    // Check local custom-documents folder
+    const localDocumentsDir = path.join(__dirname, '..', 'custom-documents');
+    let documentNamesToAdd = [];
+
+    // First delete the existing folder on AnythingLLM so we only use the newly uploaded docs
+    try {
+        console.log(`Removing existing '${FOLDER_NAME}' folder on AnythingLLM to ensure clean state...`);
+        await axios.delete(
+            `${config.LLM_API_URL}/api/v1/document/remove-folder`,
+            {
+                data: { name: FOLDER_NAME },
+                headers: {
+                    Authorization: `Bearer ${config.API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        console.log(`Successfully removed existing '${FOLDER_NAME}' folder.`);
+    } catch (e) {
+        console.log(`Error removing existing '${FOLDER_NAME}' folder (might not exist): ${e.message}`);
+    }
+
+    try {
+
+      const files = await require("fs/promises").readdir(localDocumentsDir);
+      for (const file of files) {
+        if (file.startsWith('.')) continue; // skip hidden files
+        const filePath = path.join(localDocumentsDir, file);
+        try {
+            const location = await uploadDocument(filePath);
+            if (location) {
+                documentNamesToAdd.push(location);
+            }
+        } catch (e) {
+            console.error(`Failed to upload ${file}:`, e.message);
+        }
+      }
+    } catch(err) {
+      console.log('No local custom-documents folder found or error reading it:', err.message);
+    }
+
+    if (documentNamesToAdd.length === 0) {
+      // Fallback: use whatever is already in the folder on the server
+      const documents = await listDocumentsInFolder(FOLDER_NAME);
+      const filteredDocuments = documents;
+      documentNamesToAdd = filteredDocuments.map(doc => `${FOLDER_NAME}/${doc.name}`);
+    }
 
     console.log(`Documents to add to workspace:`, documentNamesToAdd);
 
@@ -223,7 +335,7 @@ async function addDocumentsToWorkspace(workspaceSlug) {
     }
 
     const response = await axios.post(
-      `https://anyllm.johnnypie.work/api/v1/workspace/${workspaceSlug}/update-embeddings`,
+      `${config.LLM_API_URL}/api/v1/workspace/${workspaceSlug}/update-embeddings`,
       { adds: documentNamesToAdd, deletes: [] },
       {
         headers: {
@@ -238,6 +350,7 @@ async function addDocumentsToWorkspace(workspaceSlug) {
     return response.data;
   });
 }
+
 
 // User‑workspace association
 async function addUserToWorkspace(userId, workspaceSlug) {
@@ -255,7 +368,7 @@ async function addUserToWorkspace(userId, workspaceSlug) {
   console.log(`Adding user ${userId} to workspace: ${workspaceSlug}`);
   try {
     const response = await axios.post(
-      `https://anyllm.johnnypie.work/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
+      `${config.LLM_API_URL}/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
       { userIds: [parseInt(userId)], reset: false },
       {
         headers: {
@@ -280,9 +393,9 @@ async function addUserToWorkspace(userId, workspaceSlug) {
 async function getSSOToken(userId) {
   return retryApiCall(async () => {
     console.log(`Getting SSO token for user: ${userId}`);
-    console.log(`API endpoint: https://anyllm.johnnypie.work/api/v1/users/${userId}/issue-auth-token`);
+    console.log(`API endpoint: ${config.LLM_API_URL}/api/v1/users/${userId}/issue-auth-token`);
     const response = await axios.get(
-      `https://anyllm.johnnypie.work/api/v1/users/${userId}/issue-auth-token`,
+      `${config.LLM_API_URL}/api/v1/users/${userId}/issue-auth-token`,
       {
         headers: { Authorization: `Bearer ${config.API_KEY}` },
       }
@@ -297,7 +410,7 @@ async function getSSOToken(userId) {
 // Delete helpers
 async function deleteUser(userId) {
   try {
-    await axios.delete(`https://anyllm.johnnypie.work/api/v1/admin/users/${userId}`, {
+    await axios.delete(`${config.LLM_API_URL}/api/v1/admin/users/${userId}`, {
       headers: { Authorization: `Bearer ${config.API_KEY}` },
     });
     console.log(`Deleted user: ${userId}`);
@@ -311,7 +424,7 @@ async function deleteUser(userId) {
 
 async function deleteWorkspace(workspaceSlug) {
   try {
-    await axios.delete(`https://anyllm.johnnypie.work/api/v1/workspace/${workspaceSlug}`, {
+    await axios.delete(`${config.LLM_API_URL}/api/v1/workspace/${workspaceSlug}`, {
       headers: { Authorization: `Bearer ${config.API_KEY}` },
     });
     console.log(`Deleted workspace: ${workspaceSlug}`);

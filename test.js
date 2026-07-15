@@ -8,9 +8,10 @@ const PORT = process.env.PORT || 3000;
 
 // Configuration
 const API_KEY = process.env.API_KEY;
+const LLM_API_URL = process.env.LLM_API_URL || "http://127.0.0.1:3001";
 const USER_ID = process.env.USER_ID || '2';
 const CLEANUP_ENABLED = process.env.CLEANUP_ENABLED === 'true';
-const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * *'; // Daily at midnight
+const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * 0'; // Weekly at midnight on Sunday
 
 // Workspace configuration
 const WORKSPACE_NAME = process.env.WORKSPACE_NAME || 'Portfolio Workspace';
@@ -62,7 +63,7 @@ const activeSessions = new Map(); // Map of sessionId -> { userId, workspaceSlug
 async function createUser(username) {
   try {
     const response = await axios.post(
-      `https://ask.johnnypie.work/api/v1/admin/users/${USER_ID}`,
+      `${LLM_API_URL}/api/v1/admin/users/${USER_ID}`,
       {
         username: username,
         password: Math.random().toString(36).slice(-8), // Generate random password
@@ -91,7 +92,7 @@ async function createUser(username) {
 async function createWorkspace(workspaceName) {
   try {
     const response = await axios.post(
-      'https://ask.johnnypie.work/api/v1/workspace/new',
+      `${LLM_API_URL}/api/v1/workspace/new`,
       {
         name: workspaceName,
         similarityThreshold: parseFloat(SIMILARITY_THRESHOLD),
@@ -121,12 +122,103 @@ async function createWorkspace(workspaceName) {
 }
 
 // Add documents to workspace
+
+
 async function addDocumentsToWorkspace(workspaceSlug) {
   try {
+    const FormData = require('form-data');
+    const path = require('path');
+    const fsPromises = require('fs/promises');
+
+    // Check local custom-documents folder
+    const localDocumentsDir = path.join(__dirname, 'custom-documents');
+    let documentNamesToAdd = [];
+
+    // First delete the existing folder on AnythingLLM so we only use the newly uploaded docs
+    try {
+        console.log(`Removing existing 'custom-documents' folder on AnythingLLM to ensure clean state...`);
+        await axios.delete(
+            `${LLM_API_URL}/api/v1/document/remove-folder`,
+            {
+                data: { name: 'custom-documents' },
+                headers: {
+                    Authorization: `Bearer ${API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        console.log(`Successfully removed existing 'custom-documents' folder.`);
+    } catch (e) {
+        console.log(`Error removing existing 'custom-documents' folder (might not exist): ${e.message}`);
+    }
+
+    try {
+      const files = await fsPromises.readdir(localDocumentsDir);
+      for (const file of files) {
+        if (file.startsWith('.')) continue; // skip hidden files
+        const filePath = path.join(localDocumentsDir, file);
+        try {
+            console.log(`Uploading document: ${filePath}`);
+            const formData = new FormData();
+            formData.append('file', require('fs').createReadStream(filePath));
+
+            const uploadResponse = await axios.post(
+              `${LLM_API_URL}/api/v1/document/upload`,
+              formData,
+              {
+                headers: {
+                  Authorization: `Bearer ${API_KEY}`,
+                  ...formData.getHeaders(),
+                },
+              }
+            );
+
+            let location = null;
+            if (uploadResponse.data.success) {
+               location = uploadResponse.data.documents[0].location;
+            } else if (uploadResponse.data.documents && uploadResponse.data.documents.length > 0) {
+              location = uploadResponse.data.documents[0].location;
+            } else {
+                throw new Error(uploadResponse.data.error || 'Failed to upload document');
+            }
+
+            try {
+                await axios.post(
+                    `${LLM_API_URL}/api/v1/document/create-folder`,
+                    { name: 'custom-documents' },
+                    { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } }
+                );
+            } catch(e) {}
+
+            try {
+                const fileObj = uploadResponse.data.documents[0];
+                await axios.post(
+                    `${LLM_API_URL}/api/v1/document/move-files`,
+                    {
+                        files: [{ from: location, to: `custom-documents/${fileObj.title}` }]
+                    },
+                    { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } }
+                );
+                documentNamesToAdd.push(`custom-documents/${fileObj.title}`);
+            } catch (e) {
+                documentNamesToAdd.push(location);
+            }
+        } catch (e) {
+            console.error(`Failed to upload ${file}:`, e.message);
+        }
+      }
+    } catch(err) {
+      console.log('No local custom-documents folder found or error reading it:', err.message);
+    }
+
+    if (documentNamesToAdd.length === 0) {
+      documentNamesToAdd = DOCUMENTS_TO_ADD;
+    }
+
     await axios.post(
-      `https://ask.johnnypie.work/api/v1/workspace/${workspaceSlug}/update-embeddings`,
+      `${LLM_API_URL}/api/v1/workspace/${workspaceSlug}/update-embeddings`,
       {
-        adds: DOCUMENTS_TO_ADD,
+        adds: documentNamesToAdd,
         deletes: []
       },
       {
@@ -147,11 +239,13 @@ async function addDocumentsToWorkspace(workspaceSlug) {
   }
 }
 
+
+
 // Add user to workspace
 async function addUserToWorkspace(userId, workspaceSlug) {
   try {
     await axios.post(
-      `https://ask.johnnypie.work/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
+      `${LLM_API_URL}/api/v1/admin/workspaces/${workspaceSlug}/manage-users`,
       {
         userIds: [userId],
         reset: false
@@ -178,7 +272,7 @@ async function addUserToWorkspace(userId, workspaceSlug) {
 async function deleteUser(userId) {
   try {
     await axios.delete(
-      `https://ask.johnnypie.work/api/v1/admin/users/${userId}`,
+      `${LLM_API_URL}/api/v1/admin/users/${userId}`,
       {
         headers: {
           'Authorization': `Bearer ${API_KEY}`
@@ -200,7 +294,7 @@ async function deleteUser(userId) {
 async function deleteWorkspace(workspaceSlug) {
   try {
     await axios.delete(
-      `https://ask.johnnypie.work/api/v1/workspace/${workspaceSlug}`,
+      `${LLM_API_URL}/api/v1/workspace/${workspaceSlug}`,
       {
         headers: {
           'Authorization': `Bearer ${API_KEY}`
@@ -284,7 +378,7 @@ app.get('/', async (req, res) => {
     
     // Get SSO token for the new user
     const response = await axios.get(
-      `https://ask.johnnypie.work/api/v1/users/${userId}/issue-auth-token`,
+      `${LLM_API_URL}/api/v1/users/${userId}/issue-auth-token`,
       {
         headers: {
           'Authorization': `Bearer ${API_KEY}`
@@ -299,7 +393,7 @@ app.get('/', async (req, res) => {
     const destinationWorkspace = `/workspace/${workspaceSlug}`;
 
     // Construct the full SSO URL
-    const ssoUrl = new URL(`https://ask.johnnypie.work${loginPath}`);
+    const ssoUrl = new URL(`${LLM_API_URL}${loginPath}`);
     ssoUrl.searchParams.append('redirect', destinationWorkspace);
     
     const redirectUrl = ssoUrl.toString();

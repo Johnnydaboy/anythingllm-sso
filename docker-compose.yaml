@@ -7,6 +7,7 @@ services:
     volumes:
       # Persistent storage for session data
       - ./data:/app/data
+      - ./custom-documents:/app/custom-documents
     labels:
       - traefik.enable=true
       - traefik.http.routers.askredirect.rule=Host(`askredirect.johnnypie.work`)
