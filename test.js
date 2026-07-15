@@ -122,12 +122,77 @@ async function createWorkspace(workspaceName) {
 }
 
 // Add documents to workspace
+
 async function addDocumentsToWorkspace(workspaceSlug) {
   try {
+    const FormData = require('form-data');
+    const path = require('path');
+    const fsPromises = require('fs/promises');
+
+    // Check local custom-documents folder
+    const localDocumentsDir = path.join(__dirname, 'custom-documents');
+    let documentNamesToAdd = [];
+
+    // First delete the existing folder on AnythingLLM so we only use the newly uploaded docs
+    try {
+        console.log(`Removing existing 'custom-documents' folder on AnythingLLM to ensure clean state...`);
+        await axios.delete(
+            `${LLM_API_URL}/api/v1/document/remove-folder`,
+            {
+                data: { name: 'custom-documents' },
+                headers: {
+                    Authorization: `Bearer ${API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        console.log(`Successfully removed existing 'custom-documents' folder.`);
+    } catch (e) {
+        console.log(`Error removing existing 'custom-documents' folder (might not exist): ${e.message}`);
+    }
+
+    try {
+      const files = await fsPromises.readdir(localDocumentsDir);
+      for (const file of files) {
+        if (file.startsWith('.')) continue; // skip hidden files
+        const filePath = path.join(localDocumentsDir, file);
+        try {
+            console.log(`Uploading document: ${filePath}`);
+            const formData = new FormData();
+            formData.append('file', require('fs').createReadStream(filePath));
+
+            const uploadResponse = await axios.post(
+              `${LLM_API_URL}/api/v1/document/upload`,
+              formData,
+              {
+                headers: {
+                  Authorization: `Bearer ${API_KEY}`,
+                  ...formData.getHeaders(),
+                },
+              }
+            );
+
+            if (uploadResponse.data.success) {
+               documentNamesToAdd.push(uploadResponse.data.documents[0].location);
+            } else if (uploadResponse.data.documents && uploadResponse.data.documents.length > 0) {
+              documentNamesToAdd.push(uploadResponse.data.documents[0].location);
+            }
+        } catch (e) {
+            console.error(`Failed to upload ${file}:`, e.message);
+        }
+      }
+    } catch(err) {
+      console.log('No local custom-documents folder found or error reading it:', err.message);
+    }
+
+    if (documentNamesToAdd.length === 0) {
+      documentNamesToAdd = DOCUMENTS_TO_ADD;
+    }
+
     await axios.post(
       `${LLM_API_URL}/api/v1/workspace/${workspaceSlug}/update-embeddings`,
       {
-        adds: DOCUMENTS_TO_ADD,
+        adds: documentNamesToAdd,
         deletes: []
       },
       {
@@ -147,6 +212,7 @@ async function addDocumentsToWorkspace(workspaceSlug) {
     throw error;
   }
 }
+
 
 // Add user to workspace
 async function addUserToWorkspace(userId, workspaceSlug) {

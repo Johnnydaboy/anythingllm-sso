@@ -247,7 +247,27 @@ async function addDocumentsToWorkspace(workspaceSlug) {
     // Check local custom-documents folder
     const localDocumentsDir = path.join(__dirname, '..', 'custom-documents');
     let documentNamesToAdd = [];
+
+    // First delete the existing folder on AnythingLLM so we only use the newly uploaded docs
     try {
+        console.log(`Removing existing '${FOLDER_NAME}' folder on AnythingLLM to ensure clean state...`);
+        await axios.delete(
+            `${config.LLM_API_URL}/api/v1/document/remove-folder`,
+            {
+                data: { name: FOLDER_NAME },
+                headers: {
+                    Authorization: `Bearer ${config.API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        console.log(`Successfully removed existing '${FOLDER_NAME}' folder.`);
+    } catch (e) {
+        console.log(`Error removing existing '${FOLDER_NAME}' folder (might not exist): ${e.message}`);
+    }
+
+    try {
+
       const files = await require("fs/promises").readdir(localDocumentsDir);
       for (const file of files) {
         if (file.startsWith('.')) continue; // skip hidden files
