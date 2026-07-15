@@ -174,6 +174,8 @@ async function createWorkspace(workspaceName) {
 }
 
 
+
+
 // Upload a document to AnythingLLM
 async function uploadDocument(filePath) {
   return retryApiCall(async () => {
@@ -194,16 +196,49 @@ async function uploadDocument(filePath) {
       }
     );
     console.log('Upload document response:', JSON.stringify(response.data, null, 2));
+
+    let location = null;
     if (response.data.success) {
        console.log(`Document ${filePath} uploaded successfully`);
-       return response.data.documents[0].location; // usually something like custom-documents/file.pdf
+       location = response.data.documents[0].location;
+    } else if (response.data.documents && response.data.documents.length > 0) {
+      location = response.data.documents[0].location;
+    } else {
+        throw new Error(response.data.error || 'Failed to upload document');
     }
-    if (response.data.documents && response.data.documents.length > 0) {
-      return response.data.documents[0].location;
+
+    // Now attempt to move the file from root to the proper folder if needed
+    try {
+        await axios.post(
+            `${config.LLM_API_URL}/api/v1/document/create-folder`,
+            { name: FOLDER_NAME },
+            { headers: { Authorization: `Bearer ${config.API_KEY}`, 'Content-Type': 'application/json' } }
+        );
+    } catch(e) {
+        // Ignored, folder likely exists
     }
-    throw new Error(response.data.error || 'Failed to upload document');
+
+    try {
+        const fileObj = response.data.documents[0];
+        await axios.post(
+            `${config.LLM_API_URL}/api/v1/document/move-files`,
+            {
+                files: [{ from: location, to: `${FOLDER_NAME}/${fileObj.title}` }]
+            },
+            { headers: { Authorization: `Bearer ${config.API_KEY}`, 'Content-Type': 'application/json' } }
+        );
+        console.log(`Moved document to ${FOLDER_NAME}/${fileObj.title}`);
+        return `${FOLDER_NAME}/${fileObj.title}`;
+    } catch (e) {
+        console.error('Error moving file:', e.message);
+        // It might already be in the right location, so return the folder path anyway just in case
+        const fileObj = response.data.documents[0];
+        return `${FOLDER_NAME}/${fileObj.title}`;
+    }
+
   });
 }
+
 
 // List documents in a folder
 async function listDocumentsInFolder(folderName) {

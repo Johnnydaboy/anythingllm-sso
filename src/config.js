@@ -5,7 +5,7 @@ require('dotenv').config(); // Load .env variables
 
 const PORT = process.env.PORT || 3000;
 const CLEANUP_ENABLED = process.env.CLEANUP_ENABLED === 'true';
-const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * *'; // Daily at midnight
+const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * 0'; // Weekly at midnight on Sunday
 
 const WORKSPACE_NAME = process.env.WORKSPACE_NAME || 'Portfolio Workspace';
 const API_KEY = process.env.API_KEY;

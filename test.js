@@ -11,7 +11,7 @@ const API_KEY = process.env.API_KEY;
 const LLM_API_URL = process.env.LLM_API_URL || "http://127.0.0.1:3001";
 const USER_ID = process.env.USER_ID || '2';
 const CLEANUP_ENABLED = process.env.CLEANUP_ENABLED === 'true';
-const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * *'; // Daily at midnight
+const CLEANUP_CRON = process.env.CLEANUP_CRON || '0 0 * * 0'; // Weekly at midnight on Sunday
 
 // Workspace configuration
 const WORKSPACE_NAME = process.env.WORKSPACE_NAME || 'Portfolio Workspace';
@@ -123,6 +123,7 @@ async function createWorkspace(workspaceName) {
 
 // Add documents to workspace
 
+
 async function addDocumentsToWorkspace(workspaceSlug) {
   try {
     const FormData = require('form-data');
@@ -172,10 +173,35 @@ async function addDocumentsToWorkspace(workspaceSlug) {
               }
             );
 
+            let location = null;
             if (uploadResponse.data.success) {
-               documentNamesToAdd.push(uploadResponse.data.documents[0].location);
+               location = uploadResponse.data.documents[0].location;
             } else if (uploadResponse.data.documents && uploadResponse.data.documents.length > 0) {
-              documentNamesToAdd.push(uploadResponse.data.documents[0].location);
+              location = uploadResponse.data.documents[0].location;
+            } else {
+                throw new Error(uploadResponse.data.error || 'Failed to upload document');
+            }
+
+            try {
+                await axios.post(
+                    `${LLM_API_URL}/api/v1/document/create-folder`,
+                    { name: 'custom-documents' },
+                    { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } }
+                );
+            } catch(e) {}
+
+            try {
+                const fileObj = uploadResponse.data.documents[0];
+                await axios.post(
+                    `${LLM_API_URL}/api/v1/document/move-files`,
+                    {
+                        files: [{ from: location, to: `custom-documents/${fileObj.title}` }]
+                    },
+                    { headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' } }
+                );
+                documentNamesToAdd.push(`custom-documents/${fileObj.title}`);
+            } catch (e) {
+                documentNamesToAdd.push(location);
             }
         } catch (e) {
             console.error(`Failed to upload ${file}:`, e.message);
@@ -212,6 +238,7 @@ async function addDocumentsToWorkspace(workspaceSlug) {
     throw error;
   }
 }
+
 
 
 // Add user to workspace
